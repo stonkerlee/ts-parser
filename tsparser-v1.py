@@ -5,63 +5,67 @@ Version1: function-based implementation.
 Only can parse 188bytes ts stream.
 '''
 
-NUM_OF_PACKETS = 100
+TS_PACKET_SIZE = 188
+
+CODEC_TO_STRING = {
+    0x03:'MPEG1 Audio', 
+    0x04:'MPEG2 Audio',
+    0x0f:'AAC',
+    0x11:'AAC LATM',
+    0x1b:'H264',
+    0x81:'AC3',
+    0x8a:'DTS',
+    0xea:'VC1',
+}
+
 pid_of_pmt = -1
-CODEC_TO_STRING = {0x1b:'AVC', 0x0f:'AAC', 0x03:'MPEG Audio', 0x04:'MPEG Audio'}
 
-def bytearray_from_file(filename, length=2*1024*1024):
-    """Construct a bytearray from filename."""
-    return bytearray(open(filename, 'rb').read(length))
-
-
-def parse_ts_header(header):
-    """Return pid."""
-    pid = ((header[1] & 0x1F) << 8) | header[2]
-    print 'pid -> %d' % pid
-    return pid
+def ts_stream_from_file(filename, length=1024):
+    """Return a ts stream of type of bytearray."""
+    with open(filename, 'rb') as f:
+        return bytearray(f.read(length))
 
 
-def parse_pat(pat_packet):
-    """Return pid of pmt."""
-    bytearray_of_program_num = pat_packet[13:15] # 13th,14th bytes of pat packet is program_num
-    program_num = (bytearray_of_program_num[0] << 8) | bytearray_of_program_num[1]
-    print '  program_num -> %d' % program_num
-    bytearray_of_program_pid = pat_packet[15:17]
-    pid_of_pmt = ((bytearray_of_program_pid[0] & 0x1F) << 8) | bytearray_of_program_pid[1]
-    print '  pid_of_pmt -> %d' % pid_of_pmt
-    return pid_of_pmt
+def split_to_packets(ts_stream):
+    ts_packets = []
+    index_of_1st_packet = ts_stream.find(chr(0x47))
+    for i in xrange(len(ts_stream)/TS_PACKET_SIZE):
+        ts_packets.append(ts_stream[i*TS_PACKET_SIZE:(i+1)*TS_PACKET_SIZE])
+    return ts_packets
+
+
+def get_pid_of_ts_packet(ts_packet):
+    return ((ts_packet[1] & 0x1F) << 8) | ts_packet[2]
+    
+
+def get_pid_of_pmt(pat_packet):
+#     program_num = (pat_packet[13] << 8) | pat_packet[14]
+#     print '  program_num -> %d' % program_num
+    return ((pat_packet[15] & 0x1F) << 8) | pat_packet[16]
 
 
 def parse_pmt(pmt_packet):
     """Print stream type and pid of elementary streams."""
-    bytearray_of_section_length = pmt_packet[6:8]
-    section_length = ((bytearray_of_section_length[0] & 0x0F) << 8 ) | bytearray_of_section_length[1]
+    section_length = ((pmt_packet[6] & 0x0F) << 8 ) | pmt_packet[7]
 #     print '  section_length -> %d' % section_length
     num_of_es = (section_length - 4 - 9) / 5
-    print '  num_of_es -> %d' % num_of_es
+#     print '  num_of_es -> %d' % num_of_es
     
-    start_pos_of_es = 17
+    pos = 17
     for i in xrange(num_of_es):
-        stream_type = pmt_packet[start_pos_of_es]
-        pid_of_es = (pmt_packet[start_pos_of_es+1] & 0x1F) << 8 | pmt_packet[start_pos_of_es+2]
-        print '  stream_type: %x(%s), pid: %d' % (stream_type, CODEC_TO_STRING.get(stream_type), pid_of_es)
-        
-        start_pos_of_es += 5
+        stream_type = pmt_packet[pos]
+        pid = (pmt_packet[pos+1] & 0x1F) << 8 | pmt_packet[pos+2]
+        print '  stream_type: %x(%s), pid: %d' % (stream_type, CODEC_TO_STRING.get(stream_type), pid)
+        pos += 5
     
 
 if __name__ == '__main__':
-    bytearray_of_stream = bytearray_from_file('dblm.ts', 188*NUM_OF_PACKETS)
-    
-    start_pos = bytearray_of_stream.find(chr(0x47))
-#     print 'start_pos -> %d' % start_pos
-
-    for i in xrange(NUM_OF_PACKETS):
-        ts_packet = bytearray_of_stream[start_pos:start_pos+188]
-        pid = parse_ts_header(ts_packet[0:4])
-        
-        if pid == 0:  # This is PAT
-            pid_of_pmt = parse_pat(ts_packet)
+    ts_stream = ts_stream_from_file('xh.ts')
+    ts_packets = split_to_packets(ts_stream)
+    for p in ts_packets:
+        pid = get_pid_of_ts_packet(p)
+        if pid == 0: # This is PAT
+            pid_of_pmt = get_pid_of_pmt(p)
         elif pid == pid_of_pmt:
-            parse_pmt(ts_packet)
-        
-        start_pos += 188
+            parse_pmt(p)
+
